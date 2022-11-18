@@ -25,7 +25,7 @@ return function(Configuration: SelfieConfiguration?): SelfieMode
     local OverlayObject = Configuration.OverlayObject;
     ScreenshotHud.CameraButtonPosition = Configuration.CameraButtonPosition or UDim2.fromScale(.5, .95);
     ScreenshotHud.CloseButtonPosition = Configuration.CloseButtonPosition or ScreenshotHud.CameraButtonPosition - UDim2.fromScale(0.075, 0);
-    ScreenshotHud.CloseWhenScreenshotTaken = Configuration.CloseAfterShotTaken; -- Defaults to true
+    ScreenshotHud.CloseWhenScreenshotTaken = if Configuration.CloseAfterShotTaken ~= nil then Configuration.CloseAfterShotTaken else true; -- Defaults to true
 
     local CoreGuiTypes = {};
 
