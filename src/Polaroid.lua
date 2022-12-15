@@ -10,26 +10,27 @@ export type SelfieConfiguration = {
     CloseButtonOffset: UDim2?;
 };
 
-export type SelfieMode = {
+export type PolaroidType = {
     SetEnabled: (IsEnabled: boolean) -> nil;
     MapButtonTo: (OverlayObject: GuiObject) -> nil;
     Destroy: () -> nil;
 }
 
-return function(Configuration: SelfieConfiguration?): SelfieMode
+return function(Configuration: SelfieConfiguration?): PolaroidType
     local ScreenshotHud = GuiService:WaitForChild("ScreenshotHud");
 
-    local SelfieMode = {};
+    local Polaroid = {};
     local Connections: { RBXScriptConnection } = {};
 
-    local OverlayObject = Configuration.OverlayObject;
-    ScreenshotHud.CameraButtonPosition = Configuration.CameraButtonPosition or UDim2.fromScale(.5, .95);
-    ScreenshotHud.CloseButtonPosition = ScreenshotHud.CameraButtonPosition - (Configuration.CloseButtonOffset or UDim2.fromScale(0.035, 0));
-    ScreenshotHud.CloseWhenScreenshotTaken = if Configuration.CloseAfterShotTaken ~= nil then Configuration.CloseAfterShotTaken else true; -- Defaults to true
+    local OverlayObject = Configuration and Configuration.OverlayObject;
+    ScreenshotHud.ExperienceNameOverlayEnabled = false; -- Turn off the default text (place name)
+	ScreenshotHud.CameraButtonPosition = Configuration and Configuration.CameraButtonPosition or UDim2.fromScale(.5, .95);
+	ScreenshotHud.CloseButtonPosition = ScreenshotHud.CameraButtonPosition - (Configuration and Configuration.CloseButtonOffset or UDim2.fromScale(0.035, 0));
+	ScreenshotHud.CloseWhenScreenshotTaken = if Configuration and Configuration.CloseAfterShotTaken ~= nil then Configuration.CloseAfterShotTaken else true; -- Defaults to true
 
     local CoreGuiTypes = {};
 
-    function SelfieMode:SetEnabled(IsEnabled: boolean)
+    function Polaroid:SetEnabled(IsEnabled: boolean)
         ScreenshotHud.Visible = IsEnabled;
 
         for _, CoreEnum in pairs(Enum.CoreGuiType:GetEnumItems()) do
@@ -43,17 +44,17 @@ return function(Configuration: SelfieConfiguration?): SelfieMode
         end
     end
 
-    function SelfieMode:MapButtonTo(_OverlayObject: GuiObject)
+    function Polaroid:MapButtonTo(_OverlayObject: GuiObject)
         OverlayObject = _OverlayObject;
     end
 
-    function SelfieMode:Destroy()
+    function Polaroid:Destroy()
         for _, Connection in pairs(Connections) do
             Connection:Disconnect();
         end
 
         table.clear(Connections);
-        table.clear(SelfieMode);
+        table.clear(Polaroid);
     end
 
     table.insert(Connections, RunService.RenderStepped:Connect(function()
@@ -61,9 +62,9 @@ return function(Configuration: SelfieConfiguration?): SelfieMode
             local Offset = OverlayObject.AbsoluteSize / 2;
             local Position = OverlayObject.AbsolutePosition + Offset;
             ScreenshotHud.CameraButtonPosition = UDim2.fromOffset(Position.X, Position.Y);
-            ScreenshotHud.CloseButtonPosition = ScreenshotHud.CameraButtonPosition - (Configuration.CloseButtonOffset or UDim2.fromScale(0.035, 0));
+            ScreenshotHud.CloseButtonPosition = ScreenshotHud.CameraButtonPosition - (Configuration and Configuration.CloseButtonOffset or UDim2.fromScale(0.035, 0));
         end
     end))
 
-    return SelfieMode :: SelfieMode;
+    return Polaroid :: PolaroidType;
 end
