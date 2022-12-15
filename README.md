@@ -4,13 +4,13 @@ Example Use:
 ```
 local ReplicatedStorage = game:GetService('ReplicatedStorage');
 
-local SelfieMode = require(ReplicatedStorage.SelfieMode);
+local Polaroid = require(ReplicatedStorage.Polaroid);
 
-local Controller = SelfieMode({
+local PolaroidController = Polaroid({
 	CloseAfterShotTaken = false;
 })
 
 task.wait(5);
 
-Controller:SetEnabled(true);
+PolaroidController:SetEnabled(true);
 ```
