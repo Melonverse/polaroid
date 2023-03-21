@@ -1,411 +1,632 @@
 --!strict
 --!optimize 2
 local RunService = game:GetService('RunService');
-local TweenService = game:GetService('TweenService');
 local PlayerService = game:GetService('Players');
 local Lighting = game:GetService('Lighting');
+
+local UIFolder = script:WaitForChild("UI");
+local PosesFolder = script:WaitForChild("Poses");
+local Libs = script:WaitForChild("Libs");
 
 local Skybox = Lighting:FindFirstChildOfClass("Sky");
 local BackgroundImage = if Skybox then Skybox.SkyboxFt else "rbxassetid://653719321";
 
-local Signal = require(script.Libs.Signal);
-local Trove = require(script.Libs.Trove);
-local Wheel = require(script.Libs.ColorWheel);
-local Animationizer = require(script.Libs.Animationizer);
+local Signal = require(Libs.Signal);
+local Trove = require(Libs.Trove);
+local Wheel = require(Libs.ColorWheel);
+local Animationizer = require(Libs.Animationizer);
+local State = require(Libs.State);
+local Filters = require(Libs.Filters);
 
-local Hud = script.UI.Polaroid;
-local PictureTemplate = script.UI.Template;
-
-export type Polaroid = {
-	OnCapture: typeof(Signal);
-	Destroy: (self: Polaroid?) -> ();
-}
+local Hud = UIFolder:FindFirstChild("PolaroidUI");
+local PictureTemplate = UIFolder:FindFirstChild("TemplateCapture");
+local PoseTemplate = UIFolder:FindFirstChild("TemplatePose");
+local FilterTemplate = UIFolder:FindFirstChild("TemplateFilter");
 
 local function GetPoints(Object: BasePart | Model)
 	local Center: CFrame, Size: Vector3 = Object:GetPivot(), if Object:IsA("Model") then Object:GetExtentsSize() else Object.Size;
 
-    local NewVectors = {
+	local NewVectors = {
 		Vector3.new(1, 1, 1);
 		Vector3.new(1, -1, 1);
 		Vector3.new(1, 1, -1);
 		Vector3.new(1, -1, -1);
 
-        Vector3.new(-1, 1, 1);
+		Vector3.new(-1, 1, 1);
 		Vector3.new(-1, -1, 1);
 		Vector3.new(-1, 1, -1);
 		Vector3.new(-1, -1, -1);
 	};
 
-    local Points = {};
 
-    table.foreach(NewVectors, function(Index, Vector)
-		Points[Index] = (Center + Center:Inverse():VectorToObjectSpace(Vector * Size/2)).Position;
-	end)
+	local Points = {};
 
-    return Points;
+	for Index, Vector in pairs(NewVectors) do
+		Points[Index] = Center:PointToWorldSpace(Vector * Size/2);
+	end
+
+	return Points;
 end
 
-return function()
+export type Polaroid = {
+	OnCapture: typeof(Signal.new());
+	Show: () -> ();
+	Hide: () -> ();
+	Destroy: () -> ();
+}
+
+export type PolaroidConfig = {
+	MaxInstances: number?
+}
+
+return function(Configurations: PolaroidConfig?): Polaroid?
 	if not RunService:IsClient() then
 		warn("Polaroid Instance can't be ran on the Server!");
 		return
 	end
 
-    local Player = PlayerService.LocalPlayer;
+	local MAX_INSTANCES = if Configurations and Configurations.MaxInstances then Configurations.MaxInstances else 50;
+
+	local Player = PlayerService.LocalPlayer;
 	local Character = Player.Character;
 
-    if not Character then
-		warn("Please try again when the Character Instance is finished");
+	if not Character or not Character:IsDescendantOf(workspace) then
+		warn("Character must exist and be a descendant of workspace.");
 		return
 	end
 
-    local Cleaner = Trove.new();
+	local Cleaner = Trove.new();
 	local Cleaner2 = Cleaner:Add(Trove.new(), "Destroy");
 	local Animator = Cleaner:Add(Animationizer(Character), "Destroy");
 
-    local Camera = workspace.CurrentCamera;
+	local Camera = workspace.CurrentCamera;
 	local Humanoid = Character:WaitForChild("Humanoid");
 
-    Cleaner:AttachToInstance(Humanoid);
-	local Head = Character:WaitForChild("Head");
+	Cleaner:AttachToInstance(Humanoid);
+	local Hrp = Character:WaitForChild("HumanoidRootPart");
 
-	local PlayerGui = Player.PlayerGui;
+	local PlayerGui = Player.PlayerGui;	
 
-    local ScreenGui = Hud:Clone();
+	local ScreenGui: ScreenGui = Hud:Clone();
 	ScreenGui.Parent = PlayerGui;
 	Cleaner:Add(ScreenGui, "Destroy");
 
-    local Main = ScreenGui:FindFirstChild("Main");
-	local Inventory = ScreenGui:FindFirstChild("Inventory");
+	local Main = ScreenGui:FindFirstChild("Main") :: Frame;
+	local EditCapture = ScreenGui:FindFirstChild("EditCapture") :: Frame;
+	local Gallery = ScreenGui:FindFirstChild("Gallery") :: ImageLabel;
+	local Menu = ScreenGui:FindFirstChild("Menu") :: Frame;
 
-    local Polaroid = {
-		OnCapture = Signal.new();
-	};
+	local CloseButton = Main:FindFirstChild("Close") :: ImageButton;
+	local GalleryButton = Main:FindFirstChild("Gallery") :: ImageButton;
+	local MenuButton = Main:FindFirstChild("Menu") :: ImageButton;
+	local InteractButton = Main:FindFirstChild("Interact") :: ImageButton;
 
-    local Captures : { GuiObject } = {};
+	local CloseMenu = Menu:FindFirstChild("Button", true) :: TextButton;
 
-    local function GetObjectsInView()
-		local ObjectsInView: {{ Position: Vector3, Object: Instance & (Model | BasePart) }} = {};
+	local PictureFrame = EditCapture:FindFirstChild("Picture") :: Frame;
+	local ConfirmButton = PictureFrame:FindFirstChild("Confirm") :: ImageButton;
+	local CancelButton = PictureFrame:FindFirstChild("Cancel") :: ImageButton;
 
-        local function AlreadyInView(Object: BasePart | Model)
+	local Controls = EditCapture:FindFirstChild("Controls") :: Frame;
+	local ColorController = Controls:FindFirstChild("ColorController") :: Frame;
+	local ContextController = Controls:FindFirstChild("ContextController") :: Frame;
+	local Container = Controls:FindFirstChild("Container") :: ScrollingFrame;
+
+	local Context = ContextController:FindFirstChild("Context") :: ImageLabel;
+	local ContextPrev = ContextController:FindFirstChild("Previous") :: ImageButton;
+	local ContextNext = ContextController:FindFirstChild("Next") :: ImageButton;
+	local ContextLabel = Context:FindFirstChild("TextLabel") :: TextLabel;
+
+	local InitialProps = {};
+
+	local IsActive = false;
+	local Debounce = false;
+
+	local Contexts = {
+		"Light Color";
+		"Filter Color";
+		"Filters"
+	}
+
+	for _, Descendant in pairs(ScreenGui:GetDescendants()) do
+		if Descendant:IsA("GuiObject") then
+			InitialProps[Descendant] = {};
+
+			pcall(function()
+				InitialProps[Descendant].Visible = Descendant.Visible;
+			end)
+
+			pcall(function()
+				InitialProps[Descendant].Image = Descendant.Image;
+			end)
+
+			pcall(function()
+				InitialProps[Descendant].Color = Descendant.Color;
+			end)
+		end
+	end
+
+	local FilterObjects = {};
+
+	for FilterName, ImageId in pairs(Filters) do
+		local Temp = FilterTemplate:Clone();
+		Temp.Name = FilterName;
+		Temp.FilterName.Text = FilterName;
+		Temp.FilterImage.Image = ImageId;
+		Temp.Parent = Container;
+		FilterObjects[FilterName] = Temp;
+	end
+
+	local Polaroid = {};
+	Polaroid.OnCapture = Signal.new();
+
+	local Params = RaycastParams.new();
+	Params.FilterType = Enum.RaycastFilterType.Exclude;
+	Params.FilterDescendantsInstances = { Character }
+
+	local Captures : { GuiObject } = {};
+
+	local function GetObjectsInView()
+		local ObjectsInView: { Instance & (Model | BasePart) } = {};
+
+		local CameraPos = Camera.CFrame.Position;
+		local LookDirection = Camera.CFrame.LookVector;
+
+		local R = Ray.new(CameraPos, CameraPos + LookDirection * 9999);
+
+		local function AlreadyInView(Object: Model | BasePart)
 			for _, ObjectInView in pairs(ObjectsInView) do
-				if Object == ObjectInView.Object or Object:IsDescendantOf(ObjectInView.Object) then
+				if Object == ObjectInView or Object:IsDescendantOf(ObjectInView) then
 					return true;
 				end
 			end 
 			return false;
 		end
 
-        local function CheckChildren(Parent: any)
-			for _, Object in pairs(Parent:GetChildren()) do
-				if not Object:IsA("Terrain") and (Object:IsA("Model") or Object:IsA("BasePart")) then
-					Object = Object :: (Model | BasePart);
-					local Points = GetPoints(Object);
+		local Descendants = {};
 
-					for _, Point in pairs(Points) do
-						if AlreadyInView(Object) then
-							break
-						end
+		for _, Object in pairs(workspace:GetDescendants()) do
+			local Ancestor = Object:FindFirstAncestorOfClass("Model");
+			if Ancestor then
+				Object = Ancestor;
+			end
 
-						local Check = false;			
-						for _, Point2 in pairs(Points) do
-							if Point ~= Point2 then
-								for Interval = 0, 1, .1 do
-									if Check then
-										break
-									end
+			if not Object:IsA("Terrain") and not table.find(Descendants, Object) and (Object:IsA("BasePart") or Object:IsA("Model")) then
+				table.insert(Descendants, Object);
+			end
+		end
 
-									local PointToObserve = Point:Lerp(Point2, Interval);
-									local ViewportPosition, InView = Camera:WorldToViewportPoint(PointToObserve);
+		table.sort(Descendants, function(A, B) 
+			local PA, PB = A:GetPivot().Position, B:GetPivot().Position;
+			return R:ClosestPoint(PA).Magnitude < R:ClosestPoint(PB).Magnitude;
+		end)
 
-									if InView then
-										Check = true;
-										table.insert(ObjectsInView, { Position = ViewportPosition, Object = Object });
-									end								
-								end
+		for _, Object in pairs(Descendants) do
+			local Points = GetPoints(Object);
+
+			for _, Point in pairs(Points) do
+				if AlreadyInView(Object) or #ObjectsInView > MAX_INSTANCES then
+					break
+				end
+
+				local Check = false;
+				for _, Point2 in pairs(Points) do
+					if Point ~= Point2 then
+						for Interval = 0, 1, .1 do
+							if Check then
+								break
+							end
+
+							local PointToObserve = Point:Lerp(Point2, Interval);
+							local _, InView = Camera:WorldToViewportPoint(PointToObserve);
+
+							if InView then
+								Check = true;
+								table.insert(ObjectsInView, Object);
 							end
 						end
 					end
-				else
-					CheckChildren(Object);
 				end
 			end
 		end
 
-        CheckChildren(workspace);
+		local Below = workspace:Raycast(Hrp.Position, Vector3.new(0, -20, 0), Params);
 
-        return ObjectsInView;
+		if Below and Below.Instance and not AlreadyInView(Below.Instance) then
+			table.insert(ObjectsInView, Below.Instance);
+		end
+
+		return ObjectsInView;
 	end
 
-    local Controls = ScreenGui:WaitForChild("Controls");
-	local Debounce = false;
 
-    local function Capture()
+	local function Capture()
 		if Debounce == false then
 			Debounce = true;
 
-            local Objects = GetObjectsInView();
+			local Objects = GetObjectsInView();
 			local Picture = PictureTemplate:Clone();
 			local Background = Picture:FindFirstChild("Background");
 
-            Background.Image = BackgroundImage;
+			local Colors = {
+				["Light Color"] = Color3.fromRGB(255, 255, 255);
+				["Filter Color"] = Color3.fromRGB(255, 255, 255);
+			}
+
+			local function ApplyFilter(FilterName)
+				if not Picture or (FilterName == "Default" and Picture:FindFirstChild("Default")) then return end
+
+				local Filter = Picture:GetAttribute("Filter");
+
+				if Filter then
+					local FO = Picture:FindFirstChild(Filter);
+					if FO then
+						FO:Destroy();
+					end
+				end
+
+				if Filter ~= FilterName then
+					Picture:SetAttribute("Filter", FilterName);
+					local F = FilterObjects[FilterName].FilterImage:Clone();
+
+					F.Name = FilterName;
+					F.Position = UDim2.fromScale(0.5, 0.5);
+					F.Size = UDim2.fromScale(0.9, 0.9);
+					F.ImageTransparency = if FilterName ~= "Default" then 0 else 1;
+					F.BackgroundTransparency = if FilterName ~= "Default" then 1 else 0.8;
+					F.ImageColor3 = Colors["Filter Color"];
+					F.BackgroundColor3 = Colors["Filter Color"];
+					F.ZIndex = 4;
+					F.Parent = Picture;
+				elseif Filter ~= "Default" then
+					ApplyFilter("Default");
+				end
+			end
+
+			ApplyFilter("Default");
+
+			Background.Image = BackgroundImage;
 			local ClonedCamera = Camera:Clone();
 
-            local View = Background:FindFirstChildOfClass("ViewportFrame");
+			local View = Background:FindFirstChildOfClass("ViewportFrame");
 			local World = View:FindFirstChildOfClass("WorldModel");
 
 			if #Objects > 0 then
-				for _, ObjectInfo in pairs(Objects) do
+				for _, Object in pairs(Objects) do
 					pcall(function()
-						local Origin = ObjectInfo.Object;
-						local Archivable = Origin.Archivable;
+						local Archivable = Object.Archivable;
 
-                        Origin.Archivable = true;
-						local Object = Origin:Clone();
-						Origin.Archivable = Archivable;
+						Object.Archivable = true;
+						local Object = Object:Clone();
+						Object.Archivable = Archivable;
 
-                        for _, Descendant in pairs(Object:GetDescendants()) do
+						for _, Descendant in pairs(Object:GetDescendants()) do
 							if Descendant:IsA("BasePart") then
 								Descendant.Anchored = true;
-							elseif Descendant:IsA("LocalScript") then
+							elseif Descendant:IsA("BaseScript") then
 								Descendant.Disabled = true;
 								Descendant:Destroy();
 							end
 						end
 
-                        Object.Parent = World;
+						Object.Parent = World;
 					end)
 				end
 			end
 
-            View.CurrentCamera = ClonedCamera;
+			for _, Animation in pairs(Animator:GetPlayingTracks()) do
+				Animation:Stop();
+			end
+
+			if Menu.Visible then
+				MenuButton.Visible = true;
+				Menu.Visible = false;
+			end
+
+			View.CurrentCamera = ClonedCamera;
 			ClonedCamera.Parent = View;
 
-            local Index = #Captures + 1;
+			local Index = #Captures + 1;
 			Picture.Name = string.format("Capture: #%d", Index);
-
-            table.insert(Captures, Index, Picture);
 			Picture.Visible = true;
-			Picture.Parent = ScreenGui;
-			Controls.Visible = true;
+			Picture.Parent = EditCapture:FindFirstChild("Picture");
+			EditCapture.Visible = true;
 
-            local Tween = TweenService:Create(Picture, TweenInfo.new(2, Enum.EasingStyle.Circular), {
-				Position = UDim2.fromScale(.99, .55);
-				Size = UDim2.fromScale(0, 0);
-			});
+			local Cancelled = false;
 
-            local Cancelled = false;
-
-            Cleaner2:Add(function()
+			Cleaner2:Add(function()
 				if not Cancelled then
 					Polaroid.OnCapture:Fire(Picture);
-					Picture.Parent = ScreenGui.Inventory;
+					Picture.Parent = Gallery:FindFirstChild("Frame");
+					ColorController.Visible = false;
+					table.insert(Captures, Index, Picture);
 				else
-					table.remove(Captures, Index);
 					Picture:Destroy();
 				end
-
-                Controls.ColorPicker.Visible = false;
-				Controls.Visible = false;
 				Debounce = false;
 			end);
 
-            Cleaner2:Connect(Controls.Panel.Confirm.Activated, function(Input)
-				Tween:Play();
-				Tween.Completed:Wait();
+			Cleaner2:Connect(ConfirmButton.Activated, function()
+				EditCapture.Visible = false;
 				Cleaner2:Clean();
 			end)
 
-            Cleaner2:Connect(Controls.Panel.Cancel.Activated, function(Input)
+			Cleaner2:Connect(CancelButton.Activated, function()
 				Cancelled = true;
-				Tween:Play();
-				Tween.Completed:Wait();
+				EditCapture.Visible = false;
 				Cleaner2:Clean();
 			end)
 
-            local ColorWheel = nil;
-			local Activated = {
-				false, false
-			}
+			local ColorWheel = nil;
 
-            local Cleaner3 = Cleaner2:Add(Trove.new(), "Destroy");
+			local Cleaner3 = Cleaner2:Add(Trove.new(), "Destroy");
 
-            Cleaner2:Connect(Controls.Panel.Ambient.Activated, function(Input)
-				local Bool = not Activated[1];
+			local State = Cleaner2:Add(State(""), "Destroy");
 
-                if Bool then
-					Activated[2] = false;
+			Cleaner2:Add(State.OnChange:Connect(function(NewState, OldState)
+				ContextLabel.Text = NewState;
 
-                    if ColorWheel then
-						ColorWheel:Destroy();
-						ColorWheel = nil;
-					end
+				if table.find({"Light Color", "Filter Color"}, NewState) and not table.find({"Light Color", "Filter Color"}, OldState) then
+					Cleaner3:Clean();
 
-                    Controls.ColorPicker.Visible = true;
-					ColorWheel = Cleaner3:Add(Wheel(Controls.ColorPicker), "Destroy");
+					Container.Visible = false;
+					ColorController.Visible = true;
 
-                    Cleaner3:Connect(ColorWheel.OnUpdate, function(Color)
-						View.Ambient = Color;
+					ColorWheel = Cleaner3:Add(Wheel(ColorController), "Destroy");
+
+					local Filter = Picture:FindFirstChild(Picture:GetAttribute("Filter"));
+
+					Cleaner3:Connect(ColorWheel.OnUpdate, function(Color)
+						local Prop = State:Get():gsub(" ", "");
+
+						if Prop == "FilterColor" then
+							Filter.ImageColor3 = Color;
+							Filter.BackgroundColor3 = Color;
+						else
+							View.LightColor = Color;
+						end
+
+						Colors[Prop] = Color;
 					end)
 
 					Cleaner3:Connect(ColorWheel.OnCompleted, function(Color)
-						View.Ambient = Color;
+						local Prop = State:Get():gsub(" ", "");
+
+						if Prop == "FilterColor" then
+							Filter.ImageColor3 = Color;
+							Filter.BackgroundColor3 = Color;
+						else
+							View.LightColor = Color;
+						end
+
+						Colors[Prop] = Color;
 					end)
-				else
-					if ColorWheel then
-						ColorWheel:Destroy();
-						ColorWheel = nil;
+				elseif table.find({"Light Color", "Filter Color"}, OldState) and not table.find({"Light Color", "Filter Color"}, NewState) then
+					Cleaner3:Clean();
+
+					ColorController.Visible = false;
+					Container.Visible = true;
+
+					for Name, Object in pairs(FilterObjects) do
+						Cleaner3:Connect(Object.Activated, function()
+							ApplyFilter(Name);
+						end)
 					end
-
-					Controls.ColorPicker.Visible = false;
 				end
+			end), "Disconnect");
 
-                Activated[1] = Bool;
+			Cleaner2:Connect(ContextNext.Activated, function()
+				local Current : number? = table.find(Contexts, State:Get());
+				State:Set(if Current and Current + 1 <= #Contexts then Contexts[Current + 1] else Contexts[1]);
 			end)
 
-            Cleaner2:Connect(Controls.Panel.Light.Activated, function(Input)
-				local Bool = not Activated[2];
-
-                if Bool then
-					Activated[1] = false;
-
-                    if ColorWheel then
-						ColorWheel:Destroy();
-						ColorWheel = nil;
-					end
-
-                    Controls.ColorPicker.Visible = true;
-
-					ColorWheel = Cleaner3:Add(Wheel(Controls.ColorPicker), "Destroy");
-
-                    Cleaner3:Connect(ColorWheel.OnUpdate, function(Color) 
-						View.LightColor = Color;
-					end)
-
-                    Cleaner3:Connect(ColorWheel.OnCompleted, function(Color) 
-						View.LightColor = Color;
-					end)
-				else
-					if ColorWheel then
-						ColorWheel:Destroy();
-						ColorWheel = nil;
-					end
-
-                    Controls.ColorPicker.Visible = false;
-				end
-
-                Activated[2] = Bool;
+			Cleaner2:Connect(ContextPrev.Activated, function()
+				local Current : number? = table.find(Contexts, State:Get());
+				State:Set(if Current and Current - 1 >= 1 then Contexts[Current - 1] else Contexts[#Contexts]);
 			end)
+
+			State:Set(Contexts[1]);
 		end
 	end
 
-    function Polaroid.Destroy(self: Polaroid?)
-		Cleaner:Destroy();
-		table.clear(Polaroid);
-	end
-
-    local IsActive = false;
-	local Count = 1;
-
-    for _, Pose in pairs(script.Poses:GetChildren()) do
-		local Animation = Animator:LoadSequence(Pose);
-
-        local Button = script.UI.TemplatePose:Clone();
-		Button.Name = Pose.Name;
-		Button.LayoutOrder = Count;
-		Button.Visible = true;
-		Button.Parent = ScreenGui.Main.PosePanel;
-
-        Cleaner:Connect(Button.Activated, function(Input)
-			if Animation:IsPlaying() then
-				Animation:Stop();
-			else
-				for _, Track in pairs(Animator:GetPlayingTracks()) do
-					if Track:IsPlaying() then
-						Track:Stop();
-					end
-				end
-
-                Animation:Play();
-			end
-		end)
-
-        Count += 1;
-	end
-
-	Cleaner:Connect(Main.Action.Activated, function(Input)
+	Cleaner:Connect(InteractButton.Activated, function()
 		if not IsActive then
 			IsActive = true;
-			Main.Close.Visible = true;
-			Main.View.Visible = true;
-			Main.Poses.Visible = true;
+			CloseButton.Visible = true;
+			MenuButton.Visible = true;
+			GalleryButton.Visible = true;
+			InteractButton.Image = "rbxassetid://12371606205";
 
-            Camera.CameraType = Enum.CameraType.Scriptable;
+			Camera.CameraType = Enum.CameraType.Scriptable;
 
-            Cleaner:BindToRenderStep("PolaroidManipulation", Enum.RenderPriority.Camera.Value, function()
-				local Cframe = Head.CFrame;
-				Camera.CFrame = Cframe * CFrame.new(0, 0, -5) * CFrame.fromEulerAnglesXYZ(0, math.rad(180), 0);
+			Cleaner:BindToRenderStep("PolaroidManipulation", Enum.RenderPriority.Camera.Value, function()
+				local Cframe = Hrp.CFrame;
+				Camera.CFrame = Cframe * CFrame.new(0, 1.5, -5) * CFrame.fromEulerAnglesXYZ(0, math.rad(180), 0);
 			end)
 		else
 			task.spawn(Capture);
 		end
 	end)
 
-    local function DisablePolaroid()
+	local function DisablePolaroid()
 		IsActive = false;
 
-        if ScreenGui.Parent ~= nil then
-			if Main then
-				Main.Close.Visible = false;
-				Main.View.Visible = false;
-				Main.Poses.Visible = false;
-				Main.PosePanel.Visible = true;
-			end
+		if ScreenGui.Parent ~= nil then
+			for Object, Props in pairs(InitialProps) do
+				pcall(function()
+					Object.Visible = Props.Visible;
+				end)
 
-            if Inventory then
-				Inventory.Visible = false;
-			end
+				pcall(function()
+					Object.Image = Props.Image;
+				end)
 
-            if Controls then
-				Controls.Visible = false;
+				pcall(function()
+					Object.Color = Props.Color;
+				end)
 			end
 		end
+
 		Cleaner2:Clean();
+		for _, Animation in pairs(Animator:GetPlayingTracks()) do
+			Animation:Stop();
+		end
+
 		RunService:UnbindFromRenderStep("PolaroidManipulation");
 		task.wait();
 		Camera.CameraType = Enum.CameraType.Custom;
 	end
 
-    Cleaner:Connect(Main.Close.Activated, function(Input)
+	Cleaner:Connect(CloseButton.Activated, function()
 		if IsActive then
 			DisablePolaroid();
 		end
 	end)
 
-    Cleaner:Connect(Main.View.Activated, function(Input)
-		if Inventory then
-			Inventory.Visible = not Inventory.Visible;
+	Cleaner:Connect(GalleryButton.Activated, function()
+		if Gallery then
+			Gallery.Visible = not Gallery.Visible;
 		end
 	end)
 
-    Cleaner:Connect(Main.Poses.Activated, function(Input)
-		if Main.Poses.Visible then
-			Main.Poses.Visible = false;
-			Main.PosePanel.Visible = true;
+	Cleaner:Connect(MenuButton.Activated, function()
+		if Menu and not Menu.Visible then
+			Menu.Visible = true;
+			MenuButton.Visible = false;
 		end
 	end)
 
-	Cleaner:Connect(Main.PosePanel.Close.Activated, function(Input)
-		if not Main.Poses.Visible then
-			Main.Poses.Visible = true;
-			Main.PosePanel.Visible = false;
+	Cleaner:Connect(CloseMenu.Activated, function()
+		if Menu and Menu.Visible then
+			Menu.Visible = false;
+			MenuButton.Visible = true;
 		end
 	end)
 
-    Cleaner:Add(DisablePolaroid);
-    Cleaner:Connect(Humanoid.Died, function()
-		Polaroid:Destroy();
+	Cleaner:Add(DisablePolaroid);
+
+	for _, Pose in pairs(PosesFolder:GetChildren()) do
+		local Animation = Cleaner:Add(Animator:LoadSequence(Pose), "Destroy");
+
+		local PoseUI = PoseTemplate:Clone();
+		local TextLabel = PoseUI:FindFirstChild("TextLabel") :: TextLabel;
+		TextLabel.Text = Pose.Name;
+
+		local Button = PoseUI:FindFirstChild("Button", true) :: TextButton;
+
+		Cleaner:Connect(Animation.Playing, function()
+			if Button.Parent and Button.Parent:IsA("Frame") then
+				Button.Parent.BackgroundColor3 = Color3.fromRGB(255, 0, 0);
+			end
+			Button.Text = "Stop";
+		end)
+
+		Cleaner:Connect(Animation.Stopped, function()
+			if Button.Parent and Button.Parent:IsA("Frame") then 
+				Button.Parent.BackgroundColor3 = Color3.fromRGB(0, 255, 0);
+			end
+			Button.Text = "View";
+		end)
+
+		Cleaner:Connect(Button.Activated, function()
+			for _, _Animation in pairs(Animator:GetPlayingTracks()) do
+				if _Animation ~= Animation then
+					_Animation:Stop();
+				end
+			end
+
+			if Animation:IsPlaying() then
+				Animation:Stop();
+			else
+				Animation:Play();
+			end
+		end)
+
+		PoseUI.Parent = Menu:FindFirstChild("Frame");
+	end
+
+	function Polaroid.Hide()
+		DisablePolaroid();
+		if ScreenGui then			
+			for Object in pairs(InitialProps) do			
+				pcall(function()
+					Object.Visible = false;
+				end)
+			end
+		end
+	end
+
+	function Polaroid.Show()
+		if ScreenGui then
+			for Object, Properties in pairs(InitialProps) do
+				pcall(function()
+					Object.Visible = Properties.Visible;
+				end)
+
+				pcall(function()
+					Object.Image = Properties.Image;
+				end)
+
+				pcall(function()
+					Object.Color = Properties.Color;
+				end)
+			end
+		end
+	end
+
+	function Polaroid.Destroy()
+		Cleaner:Destroy();
+		table.clear(Polaroid);
+	end
+
+	Cleaner:Connect(Humanoid.Died, function()
+		task.defer(Polaroid.Destroy);
 	end)
 
-	return Polaroid :: Polaroid;
+	--[[-[
+		--[ The Polaroid Capture Instance API ]--
+			Polaroid: {
+				OnCapture: typeof(Signal.new())
+					Signals when a photo is successfully taken and sends a reference of the Capture.
+					This was left exposed in-case the developer wishes to do anything externally with the Capture.
+
+				Hide: (self) -> ()
+					Used to turn the visibility of the User Interface off.
+
+				Show: (self) -> ()
+					Used to turn the visibility of the User Interface on.
+
+				Destroy: (self) -> ()
+					A function that is used to clean up the Polaroid Capture Instance and any correlating UI.
+			}
+
+			Capture Hierarchy
+				ImageLabel -> named "Capture: #" Where # is a number that grows with the number of captures taken.
+					Background -> This is the Polaroid Frame and shouldn't be subject to changes. (Changing make break the terms of use)
+						View -> ViewportFrame Allows for changing in some Lighting Characteristics, and currently is the only way to Pseudo-Render Models on the Roblox Platform.
+							WorldModel -> An unnecessary measure as of the latest update, originally intended for use with Animations however due to roblox's handling of animations "Pose's" are set internally as a work around.
+
+		--[ Example Usage ]--
+
+		local PlayerService = game:GetService('Players');
+		local ReplicatedStorage = game:GetService('ReplicatedStorage');
+		local Polaroid = require(ReplicatedStorage.Polaroid);
+
+		local Player = PlayerService.LocalPlayer;
+
+		if not Player:HasAppearanceLoaded() then
+			Player.CharacterAppearanceLoaded:Wait();
+		end
+
+		local Camera = Polaroid({ MaxInstances = 50 }); -- MaxInstances is completely optional and defaults to 50.
+
+		Camera.OnCapture:Connect(function(Capture)
+          print(Capture.Name);
+        end)
+
+		task.delay(5, Camera.Hide);
+		task.delay(10, Camera.Show);
+	]]
+
+	return Polaroid;
 end
