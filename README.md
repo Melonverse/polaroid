@@ -1,4 +1,4 @@
-SelfieMode Screenshot Module
+Polaroid Capture Instance
 
 Example Use:
 ```
