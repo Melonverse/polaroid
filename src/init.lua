@@ -22,6 +22,7 @@ local Hud = UIFolder:FindFirstChild("PolaroidUI");
 local PictureTemplate = UIFolder:FindFirstChild("TemplateCapture");
 local PoseTemplate = UIFolder:FindFirstChild("TemplatePose");
 local FilterTemplate = UIFolder:FindFirstChild("TemplateFilter");
+local RemoveTemplate = UIFolder:FindFirstChild("TemplateRemove");
 
 local function GetPoints(Object: BasePart | Model)
 	local Center: CFrame, Size: Vector3 = Object:GetPivot(), if Object:IsA("Model") then Object:GetExtentsSize() else Object.Size;
@@ -75,18 +76,19 @@ return function(Configurations: PolaroidConfig?): Polaroid?
 		return
 	end
 
-	local Cleaner = Trove.new();
-	local Cleaner2 = Cleaner:Add(Trove.new(), "Destroy");
-	local Animator = Cleaner:Add(Animationizer(Character), "Destroy");
-
-	local Camera = workspace.CurrentCamera;
-	local Humanoid = Character:WaitForChild("Humanoid");
-
-	Cleaner:AttachToInstance(Humanoid);
-	local Hrp = Character:WaitForChild("HumanoidRootPart");
-
 	local PlayerGui = Player.PlayerGui;	
+	local Camera = workspace.CurrentCamera;
+	local Cleaner = Trove.new();
+	local Cleaner2 = Cleaner:Extend();
 
+	local Humanoid: Humanoid = Character:WaitForChild("Humanoid");
+	local Hrp = Character:WaitForChild("HumanoidRootPart");
+	
+	local RigType = Humanoid.RigType.Name;
+	local Poses = PosesFolder:FindFirstChild(RigType);
+	
+	local Animator = Cleaner:Add(Animationizer(Character), "Destroy");
+	
 	local ScreenGui: ScreenGui = Hud:Clone();
 	ScreenGui.Parent = PlayerGui;
 	Cleaner:Add(ScreenGui, "Destroy");
@@ -156,6 +158,62 @@ return function(Configurations: PolaroidConfig?): Polaroid?
 		Temp.Parent = Container;
 		FilterObjects[FilterName] = Temp;
 	end
+	
+	local PoseFrame = Menu:FindFirstChild("Frame");
+	
+	local function RefreshPoses()
+		if PoseFrame then
+			for _, V in pairs(PoseFrame:GetChildren()) do
+				if not (V:IsA("UIGridLayout") or V:IsA("UIPadding")) then
+					V:Destroy();
+				end
+			end
+		end
+		
+		if Poses then
+			for _, Pose in pairs(Poses:GetChildren()) do
+				local Animation = Cleaner:Add(Animator:LoadSequence(Pose), "Destroy");
+
+				local PoseUI = PoseTemplate:Clone();
+				local TextLabel = PoseUI:FindFirstChild("TextLabel") :: TextLabel;
+				TextLabel.Text = Pose.Name;
+
+				local Button = PoseUI:FindFirstChild("Button", true) :: TextButton;
+
+				Cleaner:Connect(Animation.Playing, function() 
+					if Button.Parent and Button.Parent:IsA("Frame") then 
+						Button.Parent.BackgroundColor3 = Color3.fromRGB(255, 0, 0);
+					end
+					Button.Text = "Stop";
+				end)
+
+				Cleaner:Connect(Animation.Stopped, function() 
+					if Button.Parent and Button.Parent:IsA("Frame") then 
+						Button.Parent.BackgroundColor3 = Color3.fromRGB(0, 255, 0); 
+					end
+					Button.Text = "View";
+				end)
+
+				Cleaner:Connect(Button.Activated, function()
+					for _, _Animation in pairs(Animator:GetPlayingTracks()) do
+						if _Animation ~= Animation then
+							_Animation:Stop();
+						end
+					end
+
+					if Animation:IsPlaying() then
+						Animation:Stop();
+					else
+						Animation:Play();
+					end
+				end)
+
+				PoseUI.Parent = PoseFrame;
+			end
+		end
+	end
+	
+	RefreshPoses();
 
 	local Polaroid = {};
 	Polaroid.OnCapture = Signal.new();
@@ -209,7 +267,7 @@ return function(Configurations: PolaroidConfig?): Polaroid?
 					break
 				end
 
-				local Check = false;
+				local Check = false;			
 				for _, Point2 in pairs(Points) do
 					if Point ~= Point2 then
 						for Interval = 0, 1, .1 do
@@ -268,7 +326,6 @@ return function(Configurations: PolaroidConfig?): Polaroid?
 				if Filter ~= FilterName then
 					Picture:SetAttribute("Filter", FilterName);
 					local F = FilterObjects[FilterName].FilterImage:Clone();
-
 					F.Name = FilterName;
 					F.Position = UDim2.fromScale(0.5, 0.5);
 					F.Size = UDim2.fromScale(0.9, 0.9);
@@ -340,6 +397,12 @@ return function(Configurations: PolaroidConfig?): Polaroid?
 					Picture.Parent = Gallery:FindFirstChild("Frame");
 					ColorController.Visible = false;
 					table.insert(Captures, Index, Picture);
+					local Remove = RemoveTemplate:Clone();
+					Remove.Parent = Picture;
+					
+					Cleaner:Connect(Remove.Activated, function() 
+						Picture:Destroy();
+					end)
 				else
 					Picture:Destroy();
 				end
@@ -359,11 +422,11 @@ return function(Configurations: PolaroidConfig?): Polaroid?
 
 			local ColorWheel = nil;
 
-			local Cleaner3 = Cleaner2:Add(Trove.new(), "Destroy");
+			local Cleaner3 = Cleaner2:Extend();
 
 			local State = Cleaner2:Add(State(""), "Destroy");
 
-			Cleaner2:Add(State.OnChange:Connect(function(NewState, OldState)
+			Cleaner2:Connect(State.OnChange, function(NewState, OldState)
 				ContextLabel.Text = NewState;
 
 				if table.find({"Light Color", "Filter Color"}, NewState) and not table.find({"Light Color", "Filter Color"}, OldState) then
@@ -408,12 +471,12 @@ return function(Configurations: PolaroidConfig?): Polaroid?
 					Container.Visible = true;
 
 					for Name, Object in pairs(FilterObjects) do
-						Cleaner3:Connect(Object.Activated, function()
+						Cleaner3:Connect(Object.Activated, function() 
 							ApplyFilter(Name);
 						end)
 					end
 				end
-			end), "Disconnect");
+			end);
 
 			Cleaner2:Connect(ContextNext.Activated, function()
 				local Current : number? = table.find(Contexts, State:Get());
@@ -429,7 +492,7 @@ return function(Configurations: PolaroidConfig?): Polaroid?
 		end
 	end
 
-	Cleaner:Connect(InteractButton.Activated, function()
+	Cleaner:Connect(InteractButton.Activated, function()	
 		if not IsActive then
 			IsActive = true;
 			CloseButton.Visible = true;
@@ -479,7 +542,7 @@ return function(Configurations: PolaroidConfig?): Polaroid?
 
 	Cleaner:Connect(CloseButton.Activated, function()
 		if IsActive then
-			DisablePolaroid();
+			DisablePolaroid();	
 		end
 	end)
 
@@ -496,7 +559,7 @@ return function(Configurations: PolaroidConfig?): Polaroid?
 		end
 	end)
 
-	Cleaner:Connect(CloseMenu.Activated, function()
+	Cleaner:Connect(CloseMenu.Activated, function() 
 		if Menu and Menu.Visible then
 			Menu.Visible = false;
 			MenuButton.Visible = true;
@@ -505,50 +568,10 @@ return function(Configurations: PolaroidConfig?): Polaroid?
 
 	Cleaner:Add(DisablePolaroid);
 
-	for _, Pose in pairs(PosesFolder:GetChildren()) do
-		local Animation = Cleaner:Add(Animator:LoadSequence(Pose), "Destroy");
-
-		local PoseUI = PoseTemplate:Clone();
-		local TextLabel = PoseUI:FindFirstChild("TextLabel") :: TextLabel;
-		TextLabel.Text = Pose.Name;
-
-		local Button = PoseUI:FindFirstChild("Button", true) :: TextButton;
-
-		Cleaner:Connect(Animation.Playing, function()
-			if Button.Parent and Button.Parent:IsA("Frame") then
-				Button.Parent.BackgroundColor3 = Color3.fromRGB(255, 0, 0);
-			end
-			Button.Text = "Stop";
-		end)
-
-		Cleaner:Connect(Animation.Stopped, function()
-			if Button.Parent and Button.Parent:IsA("Frame") then 
-				Button.Parent.BackgroundColor3 = Color3.fromRGB(0, 255, 0);
-			end
-			Button.Text = "View";
-		end)
-
-		Cleaner:Connect(Button.Activated, function()
-			for _, _Animation in pairs(Animator:GetPlayingTracks()) do
-				if _Animation ~= Animation then
-					_Animation:Stop();
-				end
-			end
-
-			if Animation:IsPlaying() then
-				Animation:Stop();
-			else
-				Animation:Play();
-			end
-		end)
-
-		PoseUI.Parent = Menu:FindFirstChild("Frame");
-	end
-
 	function Polaroid.Hide()
 		DisablePolaroid();
 		if ScreenGui then			
-			for Object in pairs(InitialProps) do			
+			for Object in pairs(InitialProps) do
 				pcall(function()
 					Object.Visible = false;
 				end)
@@ -575,18 +598,35 @@ return function(Configurations: PolaroidConfig?): Polaroid?
 	end
 
 	function Polaroid.Destroy()
+		warn("Calling destroy does get rid of all captures.");
 		Cleaner:Destroy();
 		table.clear(Polaroid);
 	end
+	
+	local function HumanoidDied()
+		DisablePolaroid();
+		
+		if Animator then
+			Animator:Destroy();
+		end
+		
+		Character = Player.CharacterAdded:Wait();
+		Humanoid = Character:WaitForChild("Humanoid");
+		Hrp = Character:WaitForChild("HumanoidRootPart");
+		Animator = Cleaner:Add(Animationizer(Character), "Destroy");
+		
+		RigType = Humanoid.RigType.Name;
+		Poses = PosesFolder:FindFirstChild(RigType);
 
-	Cleaner:Connect(Humanoid.Died, function()
-		task.defer(Polaroid.Destroy);
-	end)
-
+		RefreshPoses();
+		Cleaner:Connect(Humanoid.Died, HumanoidDied);
+	end
+	
+	Cleaner:Connect(Humanoid.Died, HumanoidDied);
 	--[[-[
 		--[ The Polaroid Capture Instance API ]--
 			Polaroid: {
-				OnCapture: typeof(Signal.new())
+				OnCapture: typeof(Signal.new()) 
 					Signals when a photo is successfully taken and sends a reference of the Capture.
 					This was left exposed in-case the developer wishes to do anything externally with the Capture.
 
@@ -598,6 +638,7 @@ return function(Configurations: PolaroidConfig?): Polaroid?
 
 				Destroy: (self) -> ()
 					A function that is used to clean up the Polaroid Capture Instance and any correlating UI.
+					Calling Destroy will also get rid of all user-based captures.
 			}
 
 			Capture Hierarchy
@@ -605,6 +646,7 @@ return function(Configurations: PolaroidConfig?): Polaroid?
 					Background -> This is the Polaroid Frame and shouldn't be subject to changes. (Changing make break the terms of use)
 						View -> ViewportFrame Allows for changing in some Lighting Characteristics, and currently is the only way to Pseudo-Render Models on the Roblox Platform.
 							WorldModel -> An unnecessary measure as of the latest update, originally intended for use with Animations however due to roblox's handling of animations "Pose's" are set internally as a work around.
+
 
 		--[ Example Usage ]--
 
@@ -626,7 +668,12 @@ return function(Configurations: PolaroidConfig?): Polaroid?
 
 		task.delay(5, Camera.Hide);
 		task.delay(10, Camera.Show);
-	]]
 
+		--[ Limitations ]--
+		Due to some roblox related limitations high density areas and smooth terrain are not supported.
+		--> On the subject of high density areas, we use some optimization methods along with some calculated distance factors to grab objects that are closest to the camera.
+		--> Relating to smooth terrain, well the easy answer is that ViewportFrames don't support the use of SmoothTerrain.
+		--> Another side note, is that a high volume of objects with high tri-counts may cause slight frame lag as they're not natively optimized in viewport frames.
+	]]
 	return Polaroid;
 end
