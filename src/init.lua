@@ -66,29 +66,23 @@ return function(Configurations: PolaroidConfig?): Polaroid?
 		return
 	end
 
-	local MAX_INSTANCES = if Configurations and Configurations.MaxInstances then Configurations.MaxInstances else 50;
+	local MAX_INSTANCES = if Configurations and Configurations.MaxInstances then Configurations.MaxInstances else 100;
 
 	local Player = PlayerService.LocalPlayer;
-	local Character = Player.Character;
-
-	if not Character or not Character:IsDescendantOf(workspace) then
-		warn("Character must exist and be a descendant of workspace.");
-		return
-	end
+	local Character = Player.Character or Player.CharacterAdded:Wait();
 
 	local PlayerGui = Player.PlayerGui;	
 	local Camera = workspace.CurrentCamera;
 	local Cleaner = Trove.new();
-	local Cleaner2 = Cleaner:Extend();
 
 	local Humanoid: Humanoid = Character:WaitForChild("Humanoid");
 	local Hrp = Character:WaitForChild("HumanoidRootPart");
-	
+
 	local RigType = Humanoid.RigType.Name;
 	local Poses = PosesFolder:FindFirstChild(RigType);
-	
+
 	local Animator = Cleaner:Add(Animationizer(Character), "Destroy");
-	
+
 	local ScreenGui: ScreenGui = Hud:Clone();
 	ScreenGui.Parent = PlayerGui;
 	Cleaner:Add(ScreenGui, "Destroy");
@@ -97,6 +91,9 @@ return function(Configurations: PolaroidConfig?): Polaroid?
 	local EditCapture = ScreenGui:FindFirstChild("EditCapture") :: Frame;
 	local Gallery = ScreenGui:FindFirstChild("Gallery") :: ImageLabel;
 	local Menu = ScreenGui:FindFirstChild("Menu") :: Frame;
+	local BigPicture = ScreenGui:FindFirstChild("BigPicture") :: Frame;
+
+	local GalleryScrollFrame = Gallery:FindFirstChild("Frame") :: ScrollingFrame;
 
 	local CloseButton = Main:FindFirstChild("Close") :: ImageButton;
 	local GalleryButton = Main:FindFirstChild("Gallery") :: ImageButton;
@@ -158,9 +155,9 @@ return function(Configurations: PolaroidConfig?): Polaroid?
 		Temp.Parent = Container;
 		FilterObjects[FilterName] = Temp;
 	end
-	
+
 	local PoseFrame = Menu:FindFirstChild("Frame");
-	
+
 	local function RefreshPoses()
 		if PoseFrame then
 			for _, V in pairs(PoseFrame:GetChildren()) do
@@ -169,7 +166,7 @@ return function(Configurations: PolaroidConfig?): Polaroid?
 				end
 			end
 		end
-		
+
 		if Poses then
 			for _, Pose in pairs(Poses:GetChildren()) do
 				local Animation = Cleaner:Add(Animator:LoadSequence(Pose), "Destroy");
@@ -187,9 +184,9 @@ return function(Configurations: PolaroidConfig?): Polaroid?
 					Button.Text = "Stop";
 				end)
 
-				Cleaner:Connect(Animation.Stopped, function() 
+				Cleaner:Connect(Animation.Stopped, function()
 					if Button.Parent and Button.Parent:IsA("Frame") then 
-						Button.Parent.BackgroundColor3 = Color3.fromRGB(0, 255, 0); 
+						Button.Parent.BackgroundColor3 = Color3.fromRGB(0, 255, 0);
 					end
 					Button.Text = "View";
 				end)
@@ -212,7 +209,7 @@ return function(Configurations: PolaroidConfig?): Polaroid?
 			end
 		end
 	end
-	
+
 	RefreshPoses();
 
 	local Polaroid = {};
@@ -297,11 +294,12 @@ return function(Configurations: PolaroidConfig?): Polaroid?
 		return ObjectsInView;
 	end
 
-
+	local CaptureCleaner = Cleaner:Extend();
+	
 	local function Capture()
 		if Debounce == false then
 			Debounce = true;
-
+			
 			local Objects = GetObjectsInView();
 			local Picture = PictureTemplate:Clone();
 			local Background = Picture:FindFirstChild("Background");
@@ -386,47 +384,45 @@ return function(Configurations: PolaroidConfig?): Polaroid?
 			local Index = #Captures + 1;
 			Picture.Name = string.format("Capture: #%d", Index);
 			Picture.Visible = true;
+			Picture.LayoutOrder = Index;
 			Picture.Parent = EditCapture:FindFirstChild("Picture");
 			EditCapture.Visible = true;
 
 			local Cancelled = false;
 
-			Cleaner2:Add(function()
+			CaptureCleaner:Add(function()
 				if not Cancelled then
 					Polaroid.OnCapture:Fire(Picture);
-					Picture.Parent = Gallery:FindFirstChild("Frame");
+					Picture.Parent = GalleryScrollFrame;
 					ColorController.Visible = false;
 					table.insert(Captures, Index, Picture);
 					local Remove = RemoveTemplate:Clone();
+					Remove.Name = "Remove";
 					Remove.Parent = Picture;
-					
-					Cleaner:Connect(Remove.Activated, function() 
-						Picture:Destroy();
-					end)
 				else
 					Picture:Destroy();
 				end
 				Debounce = false;
 			end);
 
-			Cleaner2:Connect(ConfirmButton.Activated, function()
+			CaptureCleaner:Connect(ConfirmButton.Activated, function()
 				EditCapture.Visible = false;
-				Cleaner2:Clean();
+				CaptureCleaner:Clean();
 			end)
 
-			Cleaner2:Connect(CancelButton.Activated, function()
+			CaptureCleaner:Connect(CancelButton.Activated, function()
 				Cancelled = true;
 				EditCapture.Visible = false;
-				Cleaner2:Clean();
+				CaptureCleaner:Clean();
 			end)
 
 			local ColorWheel = nil;
 
-			local Cleaner3 = Cleaner2:Extend();
+			local Cleaner3 = CaptureCleaner:Extend();
 
-			local State = Cleaner2:Add(State(""), "Destroy");
+			local State = CaptureCleaner:Add(State(""), "Destroy");
 
-			Cleaner2:Connect(State.OnChange, function(NewState, OldState)
+			CaptureCleaner:Connect(State.OnChange, function(NewState, OldState)
 				ContextLabel.Text = NewState;
 
 				if table.find({"Light Color", "Filter Color"}, NewState) and not table.find({"Light Color", "Filter Color"}, OldState) then
@@ -471,19 +467,19 @@ return function(Configurations: PolaroidConfig?): Polaroid?
 					Container.Visible = true;
 
 					for Name, Object in pairs(FilterObjects) do
-						Cleaner3:Connect(Object.Activated, function() 
+						Cleaner3:Connect(Object.Activated, function()
 							ApplyFilter(Name);
 						end)
 					end
 				end
 			end);
 
-			Cleaner2:Connect(ContextNext.Activated, function()
+			CaptureCleaner:Connect(ContextNext.Activated, function()
 				local Current : number? = table.find(Contexts, State:Get());
 				State:Set(if Current and Current + 1 <= #Contexts then Contexts[Current + 1] else Contexts[1]);
 			end)
 
-			Cleaner2:Connect(ContextPrev.Activated, function()
+			CaptureCleaner:Connect(ContextPrev.Activated, function()
 				local Current : number? = table.find(Contexts, State:Get());
 				State:Set(if Current and Current - 1 >= 1 then Contexts[Current - 1] else Contexts[#Contexts]);
 			end)
@@ -491,28 +487,81 @@ return function(Configurations: PolaroidConfig?): Polaroid?
 			State:Set(Contexts[1]);
 		end
 	end
+	
+	local InteractCleaner = Cleaner:Extend();
+	local GalleryCleaner = Cleaner:Extend();
+	
+	local function CloseBigPicture()
+		if BigPicture then
+			BigPicture.Visible = false;
 
-	Cleaner:Connect(InteractButton.Activated, function()	
-		if not IsActive then
+			for _, Capture in pairs(BigPicture:GetChildren()) do
+				if not Capture:IsA("TextLabel") then
+					Capture.Parent = GalleryScrollFrame;
+				end
+			end
+		end
+	end
+	
+	Cleaner:Connect(InteractButton.Activated, function()
+		if not IsActive and Humanoid then
+			local JumpPower = Humanoid.JumpPower;
+			local WalkSpeed = Humanoid.WalkSpeed;
+			Humanoid.JumpPower = 0;
+			Humanoid.WalkSpeed = 0;
+			
+			InteractCleaner:Add(function() 
+				if Humanoid then
+					Humanoid.JumpPower = JumpPower;
+					Humanoid.WalkSpeed = WalkSpeed;
+				end
+			end)
+			
 			IsActive = true;
+			InteractButton.Icon.Image = "";
 			CloseButton.Visible = true;
 			MenuButton.Visible = true;
 			GalleryButton.Visible = true;
 			InteractButton.Image = "rbxassetid://12371606205";
 
 			Camera.CameraType = Enum.CameraType.Scriptable;
-
-			Cleaner:BindToRenderStep("PolaroidManipulation", Enum.RenderPriority.Camera.Value, function()
-				local Cframe = Hrp.CFrame;
-				Camera.CFrame = Cframe * CFrame.new(0, 1.5, -5) * CFrame.fromEulerAnglesXYZ(0, math.rad(180), 0);
+			
+			local Cframe = Hrp.CFrame;
+			local X, Y = 0, 0;
+			
+			local function Lerp(A: number, B: number, T: number)
+				return A + (B - A) * T;
+			end
+			InteractCleaner:Connect(Humanoid:GetPropertyChangedSignal("MoveDirection"), function()
+				while Humanoid and Humanoid.MoveDirection ~= Vector3.zero do
+					local Direction = -Camera.CFrame:VectorToObjectSpace(Humanoid.MoveDirection).Unit;
+					
+					if Direction == Direction then
+						local YDir = Direction.Z;
+						if math.abs(YDir) >= .5 then
+							Y = math.clamp(Lerp(Y, Y + YDir, .01), -5, 5);
+						end
+						local XDir = Direction.X;
+						if math.abs(XDir) >= .5 then
+							X = math.clamp(Lerp(X, X + XDir, .01), -5, 5);
+						end
+					end
+					task.wait();
+				end
 			end)
-		else
+			
+			InteractCleaner:BindToRenderStep("PolaroidManipulation", Enum.RenderPriority.Camera.Value, function()
+				Camera.CFrame = CFrame.lookAt((Cframe * CFrame.new(X, 1.5 + Y, -5)).Position, Cframe.Position);
+			end)
+		elseif IsActive then
+			if Gallery.Visible then Gallery.Visible = false; GalleryCleaner:Clean(); CloseBigPicture(); end
 			task.spawn(Capture);
 		end
 	end)
 
 	local function DisablePolaroid()
 		IsActive = false;
+		Debounce = false;
 
 		if ScreenGui.Parent ~= nil then
 			for Object, Props in pairs(InitialProps) do
@@ -530,36 +579,81 @@ return function(Configurations: PolaroidConfig?): Polaroid?
 			end
 		end
 
-		Cleaner2:Clean();
 		for _, Animation in pairs(Animator:GetPlayingTracks()) do
 			Animation:Stop();
 		end
+		
+		GalleryCleaner:Clean();
+		InteractCleaner:Clean();
+		CaptureCleaner:Clean();
 
-		RunService:UnbindFromRenderStep("PolaroidManipulation");
-		task.wait();
-		Camera.CameraType = Enum.CameraType.Custom;
+		task.defer(function()
+			Camera.CameraType = Enum.CameraType.Custom;
+		end)
 	end
 
 	Cleaner:Connect(CloseButton.Activated, function()
 		if IsActive then
-			DisablePolaroid();	
+			DisablePolaroid();
 		end
 	end)
 
 	Cleaner:Connect(GalleryButton.Activated, function()
-		if Gallery then
+		if Gallery and not Debounce then
 			Gallery.Visible = not Gallery.Visible;
+
+			if Gallery.Visible then
+				GalleryCleaner:Clean();
+				GalleryCleaner:Add(CloseBigPicture);
+
+				local function ManageConnection(Capture: ImageButton)
+					local Remove: ImageButton = Capture:WaitForChild("Remove") :: ImageButton;
+					Remove.Visible = true;
+					
+					GalleryCleaner:Connect(Remove.Activated, function()
+						Capture:Destroy();
+					end)
+
+					GalleryCleaner:Connect(Capture.Activated, function()
+						if BigPicture and not BigPicture.Visible then
+							BigPicture.Visible = true;
+							Capture.Parent = BigPicture;
+							Remove.Visible = false;
+							Gallery.Visible = false;
+						elseif BigPicture and BigPicture.Visible then
+							BigPicture.Visible = false;
+							Remove.Visible = true;
+							Capture.Parent = GalleryScrollFrame;
+							Gallery.Visible = true;
+						end
+					end)
+				end
+
+				for _, Capture in pairs(GalleryScrollFrame:GetChildren()) do
+					if Capture:IsA("ImageButton") then
+						ManageConnection(Capture);
+					end
+				end
+
+				GalleryCleaner:Connect(GalleryScrollFrame.ChildAdded, function(Child) 
+					if Child:IsA("ImageButton") then
+						ManageConnection(Child);
+					end
+				end)
+			elseif not Debounce then
+				GalleryCleaner:Clean();
+			end
 		end
 	end)
 
 	Cleaner:Connect(MenuButton.Activated, function()
-		if Menu and not Menu.Visible then
+		if Menu and not Debounce and not Menu.Visible then
 			Menu.Visible = true;
 			MenuButton.Visible = false;
 		end
 	end)
 
-	Cleaner:Connect(CloseMenu.Activated, function() 
+	Cleaner:Connect(CloseMenu.Activated, function()
 		if Menu and Menu.Visible then
 			Menu.Visible = false;
 			MenuButton.Visible = true;
@@ -570,7 +664,7 @@ return function(Configurations: PolaroidConfig?): Polaroid?
 
 	function Polaroid.Hide()
 		DisablePolaroid();
-		if ScreenGui then			
+		if ScreenGui then
 			for Object in pairs(InitialProps) do
 				pcall(function()
 					Object.Visible = false;
@@ -602,26 +696,26 @@ return function(Configurations: PolaroidConfig?): Polaroid?
 		Cleaner:Destroy();
 		table.clear(Polaroid);
 	end
-	
+
 	local function HumanoidDied()
 		DisablePolaroid();
-		
+
 		if Animator then
 			Animator:Destroy();
 		end
-		
+
 		Character = Player.CharacterAdded:Wait();
 		Humanoid = Character:WaitForChild("Humanoid");
 		Hrp = Character:WaitForChild("HumanoidRootPart");
 		Animator = Cleaner:Add(Animationizer(Character), "Destroy");
-		
+
 		RigType = Humanoid.RigType.Name;
 		Poses = PosesFolder:FindFirstChild(RigType);
 
 		RefreshPoses();
 		Cleaner:Connect(Humanoid.Died, HumanoidDied);
 	end
-	
+
 	Cleaner:Connect(Humanoid.Died, HumanoidDied);
 	--[[-[
 		--[ The Polaroid Capture Instance API ]--
@@ -642,7 +736,7 @@ return function(Configurations: PolaroidConfig?): Polaroid?
 			}
 
 			Capture Hierarchy
-				ImageLabel -> named "Capture: #" Where # is a number that grows with the number of captures taken.
+				ImageButton -> named "Capture: #" Where # is a number that grows with the number of captures taken.
 					Background -> This is the Polaroid Frame and shouldn't be subject to changes. (Changing make break the terms of use)
 						View -> ViewportFrame Allows for changing in some Lighting Characteristics, and currently is the only way to Pseudo-Render Models on the Roblox Platform.
 							WorldModel -> An unnecessary measure as of the latest update, originally intended for use with Animations however due to roblox's handling of animations "Pose's" are set internally as a work around.

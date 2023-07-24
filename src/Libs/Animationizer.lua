@@ -90,6 +90,7 @@ function Tokenizer:KeyframeSequence(Character: Model, KeyframeSeq: KeyframeSeque
 	local RunningThread = nil;
 
 	local CustomAnimation : CustomAnimationType = {
+		Name = KeyframeSeq.Name;
 		Completed = Cleaner:Add(Signal.new(), "Destroy");
 		Stopped = Cleaner:Add(Signal.new(), "Destroy");
 		Playing = Cleaner:Add(Signal.new(), "Destroy");
@@ -222,13 +223,13 @@ function Tokenizer:KeyframeSequence(Character: Model, KeyframeSeq: KeyframeSeque
 						until Stopped or tick() - Start >= T;
 					end
 				end
-
-                if not self.Loop then
+				
+				if not self.Loop then
 					Playing = false;
 					self.Stopped:Fire();
 					return
 				end
-
+				
 				Count += 1;
 				task.wait();
 			until Stopped;
@@ -292,14 +293,13 @@ return function(Character: Model)
 		Cleaner:Add(CustomAnimation, "Destroy");
 
 		Cleaner:Connect(CustomAnimation.Playing, function()
-			if Animate then
+			if Animate and not Animate.Disabled then
 				Animate.Disabled = true;
+				StopAnimations();
 			end
-
-			StopAnimations();
 		end)
 
-		Cleaner:Connect(CustomAnimation.Stopped, function()
+		Cleaner:Connect(CustomAnimation.Stopped, function()	
 			if Animate and Animate.Parent and #CustomAnimator:GetPlayingTracks() == 0 then
 				Animate.Disabled = false;
 			end
