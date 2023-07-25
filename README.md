@@ -17,6 +17,11 @@ The Polaroid tool is available for download on ToolBlocks, so you can download a
 
 https://toolblocks.gg/a/polaroid.W0XAdtA4JedY6PAJ7ckQ
 
+## From Roblox
+
+The tool is also available on the Roblox library.
+https://create.roblox.com/marketplace/asset/14190431961/Polaroid-Capture-Tool
+
 Download the tool and place it in your game by dragging and dropping the file into Roblox studio. Once inserted, place
 the module under ReplicatedStorage.
 
