@@ -2,7 +2,7 @@
 
 ![Screenshot](https://toolblocks.gg/cdn/FbGjBT8zFmqxKuB8riag)
 
-Polaroid Instant is the official developer tool for Roblox that allows you to bring the classic Polaroid Film experience
+Polaroid Instant is the developer tool for Roblox that allows you to bring the classic Polaroid Film experience
 to your game!
 
 With Polaroid Instant, you can add a Polaroid camera feature to your game, giving users the ability to take selfies and
